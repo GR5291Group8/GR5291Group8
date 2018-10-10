@@ -1,0 +1,62 @@
+---
+title: "Untitled"
+output: html_document
+---
+
+```{r}
+credits <- read.csv("tmdb_5000_credits.csv", header = TRUE)
+names(credits)
+summary(credits)
+head(credits)
+
+movies <- read.csv("tmdb_5000_movies.csv", header = TRUE)
+names(movies)
+summary(movies)
+head(movies)
+
+m <- merge(movies, credits, by.x = "id", by.y = "movie_id")
+dim(m)
+home = summary(m$homepage)
+tag = summary(m$tagline)
+class(home)
+home
+
+sum(movies$title!= credits$title)      # 0
+sum(is.na(movies))     # 2
+sum(is.na(credits))    # 0
+sum(is.na(data))       # 2
+
+which(is.na(data))
+
+length(which(m$revenue==0 & m$budget==0))
+length(which(m$original_language==0))
+```
+
+
+```{r}
+library(stringr)
+
+names(m)
+m1 <- m[,c("budget","original_language","popularity","release_date","runtime","vote_average","vote_count","revenue")]
+m1 <- m1[!(m1$budget== 0 | m1$revenue== 0),]
+m1$return <- m1$revenue/m1$budget-1
+year <- str_sub(m1$release_date, 1,4)
+month <- str_sub(m1$release_date, 6,7)
+head(year,10)
+head(month,10)
+m1$month <- month
+m1$year <- year 
+head(m1)
+
+plot(m1$year,m1$return,type="p")
+plot(m1$month,m1$return,type="p")
+plot(m1$vote_average,m1$return,type="p")
+
+```
+
+
+```{r}
+
+
+
+```
