@@ -1,0 +1,138 @@
+---
+title: "movie_slm"
+author: "yq2232"
+date: "2018Äê10ÔÂ17ÈÕ"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+1. Load and clean data
+```{r}
+setwd("C:/Users/Yan Qin/Documents/MA-COLUMBIA/GR5291/ADA GROUP PROJECT/tmdb-5000-movie-dataset")
+data_1 = read.csv("cleaned_movie_data_with_categorical.csv", header = TRUE)
+names(data_1)
+# some rows have NA..
+# sort(unique(which(is.na(data_1))%%nrow(data_1)))
+# fix them in Excel
+
+data_1 =cbind(data_1[, c("runtime", "vote_average", "vote_count", "year", "month",  "return_rate", "popularity")], data_1[, 18:91])
+dim(data_1)
+
+# check variables' types
+data_type = c()
+for (i in 1:ncol(data_1)){
+  data_type[i] = class(data_1[1,i])
+}
+data_type
+
+
+# covert "year" to a variable that has base year and additional years
+summary(data_1[, "year"])
+base_year = min(data_1[, "year"])
+data_1[, "year"] = data_1[, "year"] - base_year
+
+# convert "month" to categorical variable
+data_1[, "month"] = as.factor(data_1[, "month"])
+
+# some languages appear as gibberish, can we convert gibberish to English?
+# if no, then we give them new names as: L1, L2, L3, ..., L55
+gibb = names(data_1)[27:81]
+n_lan = 81-27+1
+new_name = c()
+for (i in 1:n_lan){new_name[i] = paste("L", i, sep = "")}
+colnames(data_1) [27:81] = new_name
+language_reference_table = matrix(c(new_name, gibb), ncol = 2)
+# here is the table of the corresponding languages in original setting.
+language_reference_table
+```
+
+
+2.Get ready for regression model
+---------summary statistics
+```{r}
+# seperate datasets for return driven model and popularity driven model
+data_return = data_1[, -7]
+dim(data_return)
+data_popularity = data_1[, -6]
+dim(data_popularity)
+
+# fit linear regression models
+lmod_return = lm(return_rate~., data = data_return)
+lmod_popularity = lm(popularity~., data = data_popularity)
+sum_r = summary(lmod_return)
+sum_p = summary(lmod_popularity) 
+which(sum_r$coefficients[,4]<0.05)
+# western, mystery, action, science.fiction, horror are significant (when other variabes are included in the model)
+which(sum_p$coefficients[,4]<0.05)
+# adventure, drama, animation are significant (when other variables are included in the model)
+
+# r-squared in two models
+sum_r$adj.r.squared
+sum_p$adj.r.squared
+```
+
+3. check for colinearity 
+```{r}
+library(car)
+# vif
+vif(lmod_return)
+vif(lmod_popularity)
+# all less than 10, no colinearity is detected
+# condition number?
+# 
+```
+
+4. Model Selection
+LASSO
+```{r}
+data(data_return); require(glmnet)
+x = as.matrix(data_return[,-6])
+y = data_return$return_rate
+lmod_lasso = cv.glmnet(x, y=y, alpha = 1) 
+plot(lmod_lasso)
+# lambda that can minimize MSE
+lmod_lasso$lambda.min
+# coefficients of lasso predictors
+coef(lmod_lasso, s=lmod_lasso$lambda.min)
+```
+Stepwise Selection
+```{r}
+library(MASS)
+stepAIC(lmod_return, direction="both")$anova
+#  L11 + L15 + L33 + L44 + L45 + L51
+language_reference_table[c(11, 15, 33, 44, 45, 51), ]
+lmod_step_return = lm(return_rate~runtime + vote_average + vote_count + year + Documentary +  Crime + Western + Mystery + Action + Science.Fiction + Fantasy + 
+Animation + Horror + L11 + L15 + L33 + L44 + L45 + L51, data = data_return)
+summary(lmod_step_return)
+
+
+stepAIC(lmod_popularity, direction="both")$anova
+# L3 + L8 + L10 + L20 + L33 + L51
+language_reference_table[c(3, 8, 10, 20, 33, 51), ]
+lmod_step_popularity = lm(popularity ~ runtime + vote_average + vote_count + year + Documentary + Thriller + Adventure + Fantasy + Drama + Animation + L3 + L8 + L10 + L20 + L33 + L51 + Horror, data = data_popularity)
+summary(lmod_step_popularity)
+```
+
+5. Diagnostics
+```{r}
+# linearity
+# normality
+# homoskedasticity
+# uncorralted
+# outliers and influential points
+```
+
+6. Transformation
+```{r}
+
+
+```
+7. Inference
+```{r}
+# significant
+# CI
+
+```
