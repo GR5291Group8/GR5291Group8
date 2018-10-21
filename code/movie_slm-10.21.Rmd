@@ -1,0 +1,223 @@
+---
+title: "movie_slm"
+author: "yq2232"
+date: "2018??10??17??"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+1. Load and clean data
+```{r}
+
+data_1 = read.csv("cleaned_movie_data_with_categorical.csv", header = TRUE)
+names(data_1)
+# some rows have NA..
+# sort(unique(which(is.na(data_1))%%nrow(data_1)))
+# fix them in Excel
+
+data_1 =cbind(data_1[, c("runtime", "vote_average", "vote_count", "year", "month",  "return_rate", "popularity")], data_1[, 19:91])
+dim(data_1)
+names(data_1)
+View(data_1)
+
+# check variables' types
+data_type = c()
+for (i in 1:ncol(data_1)){
+  data_type[i] = class(data_1[1,i])
+}
+data_type
+
+
+# covert "year" to a variable that has base year and additional years
+summary(data_1[, "year"])
+base_year = min(data_1[, "year"])
+data_1[, "year"] = data_1[, "year"] - base_year
+
+# convert "month" to categorical variable
+data_1[, "month"] = as.factor(data_1[, "month"])
+
+# some languages appear as gibberish, can we convert gibberish to English?
+# if no, then we give them new names as: L1, L2, L3, ..., L55
+gibb = names(data_1)[27:80]
+n_lan = 80-27+1
+new_name = c()
+for (i in 1:n_lan){new_name[i] = paste("L", i, sep = "")}
+colnames(data_1) [27:80] = new_name
+language_reference_table = matrix(c(new_name, gibb), ncol = 2)
+# here is the table of the corresponding languages in original setting.
+language_reference_table
+```
+
+
+2.Get ready for regression model
+---------summary statistics
+```{r}
+# seperate datasets for return driven model and popularity driven model
+data_return = data_1[, -7]
+dim(data_return)
+data_popularity = data_1[, -6]
+dim(data_popularity)
+
+# fit linear regression models
+lmod_return = lm(return_rate~., data = data_return)
+lmod_popularity = lm(popularity~., data = data_popularity)
+sum_r = summary(lmod_return)
+sum_p = summary(lmod_popularity) 
+which(sum_r$coefficients[,4]<0.05)
+which(sum_p$coefficients[,4]<0.05)
+
+# r-squared in two models
+sum_r$adj.r.squared
+sum_p$adj.r.squared
+```
+
+3. check for colinearity 
+```{r}
+library(car)
+# vif
+vif(lmod_return)
+vif(lmod_popularity)
+# all less than 10, no colinearity is detected
+# condition number?
+```
+4. Separate data into Testing and Training datasets
+```{r}
+set.seed(123)
+# 75% of the data are training; 25% of the data are testing
+smp_size = floor(0.75 * nrow(data_1))
+train_ind = sample(seq_len(nrow(data_1)), size = smp_size)
+train = data_1[train_ind, ]
+test = data_1[-train_ind, ]
+```
+training data
+```{r}
+data_return_train = train[, -7]
+data_popularity_train = train[, -6]
+```
+testing data
+```{r}
+data_return_test = test[, -7]
+data_popularity_test = test[, -6]
+```
+
+5. Model Selection
+
+(1)LASSO
+```{r}
+data(data_return); #require(glmnet)
+library(glmnet)
+x = as.matrix(data_return[,-6])
+y = data_return$return_rate
+lmod_lasso = cv.glmnet(x, y=y, alpha = 1) 
+plot(lmod_lasso)
+# lambda that can minimize MSE
+lmod_lasso$lambda.min
+# coefficients of lasso predictors
+coef(lmod_lasso, s=lmod_lasso$lambda.min)
+```
+
+(2) Stepwise Selection
+```{r}
+library(MASS)
+stepAIC(lmod_return, direction="both")$anova
+#  L11(greek) + L15 + L33 + L44 + L45 + L51
+language_reference_table[c(11, 15, 33, 44, 45, 51), ]
+lmod_step_return = lm(return_rate~runtime + vote_average + vote_count + year + Documentary +  Crime + Western + Mystery + Action + Science.Fiction + Fantasy + 
+Animation + Horror + L11 + L15 + L33 + L44 + L45 + L51, data = data_return)
+summary(lmod_step_return)
+
+
+stepAIC(lmod_popularity, direction="both")$anova
+# L3 + L8 + L10 + L20 + L33 + L51
+language_reference_table[c(3, 8, 10, 20, 33, 51), ]
+lmod_step_popularity = lm(popularity ~ runtime + vote_average + vote_count + year + Documentary + Thriller + Adventure + Fantasy + Drama + Animation + L3 + L8 + L10 + L20 + L33 + L51 + Horror, data = data_popularity)
+summary(lmod_step_popularity)
+```
+
+Regression for training data
+```{r}
+# train return
+lmod_return_train = lm(return_rate~., data = data_return_train)
+stepAIC(lmod_return_train, direction="both")$anova
+# L15 + L44 + L45
+language_reference_table[c(15, 44, 45), ]
+
+lmod_step_return_train = lm(return_rate ~ runtime + vote_count + year + Documentary + Crime + Thriller + Western + Mystery + Action + Science.Fiction + Fantasy + Animation + Horror + L15 + L44 + L45, data = data_return_train)
+summary(lmod_step_return_train)
+
+# train popularity
+lmod_popularity_train = lm(popularity~., data = data_popularity_train)
+stepAIC(lmod_popularity_train, direction="both")$anova
+# L3 + L5 + L8 + L10 + L15 + L20 + L33 + L39 + L46 + L51
+language_reference_table[c(3, 5, 8, 10, 15, 20, 33, 39, 46, 51), ]
+lmod_step_popularity_train = lm(popularity ~ vote_average + vote_count + year + Documentary + Crime + Thriller + Western + Action + Comedy + Science.Fiction + Fantasy + Drama + Animation + L3 + L5 + L8 + L10 + L15 + L20 + L33 + L39 + L46 + L51, data = data_popularity_train)
+summary(lmod_step_popularity_train)
+
+```
+
+
+6. Diagnostics
+```{r}
+# linearity
+par(mfrow = c(2,2))
+plot(lmod_step_return_train, 1)
+summary(lmod_step_return_train)$r.squared
+
+# normality
+hist(lmod_step_return_train$residuals)
+qqnorm(resid(lmod_step_return_train))
+qqline(resid(lmod_step_return_train))
+
+shapiro.test(lmod_step_return_train$residuals)   # not normal
+
+# homoskedasticity
+# uncorralted
+# outliers and influential points
+```
+
+7. Transformation
+```{r}
+# log
+lmod_step_return_train_transform = lm(log(return_rate) ~ log(runtime + vote_count + year + Documentary + Crime + Thriller + Western + Mystery + Action + Science.Fiction + Fantasy + Animation + Horror + L15 + L44 + L45), data = data_return_train)
+summary(lmod_step_return_train_transform)
+hist(lmod_step_return_train_transform$residuals)
+
+qqnorm(resid(lmod_step_return_train_transform))
+qqline(resid(lmod_step_return_train_transform))
+
+shapiro.test(lmod_step_return_train_transform$residuals)
+
+
+# boxcox
+library("caret")
+dist_boxcox <- BoxCoxTrans(data_return_train$return_rate)
+dist_new <- predict(dist_boxcox, data_return_train$return_rate)
+fit_return_train_boxcox <- lm(dist_new ~ runtime + vote_count + year + Documentary + Crime + Thriller + Western + Mystery + Action + Science.Fiction + Fantasy + Animation + Horror + L15 + L44 + L45, data = data_return_train)
+
+hist(fit_return_train_boxcox$residuals)
+
+qqnorm(resid(lmod_step_return_train_transform))
+qqline(resid(lmod_step_return_train_transform))
+shapiro.test(fit_return_train_boxcox$residuals)
+
+
+boxCox(lmod_step_return_train, family = "yjPower", plotit = TRUE)
+
+
+
+```
+8. Inference
+```{r}
+# significant
+# CI
+# PI
+
+```
+9. Testing Standardized Linear Model
+```{r}
+
+
+```
