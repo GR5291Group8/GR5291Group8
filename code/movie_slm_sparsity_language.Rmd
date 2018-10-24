@@ -1,0 +1,393 @@
+---
+title: "movie_slm_sparsity"
+author: "Yan Qin"
+date: "2018Äê10ÔÂ24ÈÕ"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+10.1 Solve for the sparsity of language matrix
+```{r}
+# language reference table
+# what we have selected in our model (return_rate/popularity)
+language_reference_table[c(15,44,45), 2]
+language_reference_table[c(3,5,8,10,15,20,33,39,46,51,55), 2]
+# some languages are minority language
+# this may influence the  model fitting
+language_matrix  = data_1[, 27:81] # sparsity
+language_num = colSums(language_matrix)
+x = names(language_num)
+y = as.numeric(language_num)
+barplot(y, names.arg =x, main = "histogram of number of languages", xlab = "languages", ylab = "frequncy of languages in movies", ylim = c(0, 3000) ) 
+sort(language_num, decreasing = TRUE)
+summary(language_num)
+# w set our threshold of being majority language as whose language_num greater than or equal to 3rd quantile of language_num.
+lan_threshold = as.numeric(summary(language_num)[5])
+lan_threshold # which is 28
+# these are the majority languages
+name = names(which(language_num>=lan_threshold))
+language_reference_table[as.numeric(which(language_num>=lan_threshold)), 2]
+major_language = language_matrix[, name]
+# their numbers are
+as.numeric(language_num[as.numeric(which(language_num>=lan_threshold))])
+# minority language matrix
+min_language = language_matrix[, which(!names(language_matrix)%in%name)]
+min_language = rowSums(min_language)
+major_language$min_language = min_language
+data_new = cbind(data_1[,1:26],major_language)
+names(data_new)
+```
+data_new is our new data which combines all minority languages to one variable "min_language". 
+We run linear model again.
+
+10.2 Get ready for regression model
+---------summary statistics
+```{r}
+# seperate datasets for return driven model and popularity driven model
+data_return = data_new[, -7]
+dim(data_return)
+data_popularity = data_new[, -6]
+dim(data_popularity)
+
+# fit linear regression models
+lmod_return = lm(return_rate~., data = data_return)
+lmod_popularity = lm(popularity~., data = data_popularity)
+sum_r = summary(lmod_return)
+sum_p = summary(lmod_popularity) 
+which(sum_r$coefficients[,4]<0.05)
+which(sum_p$coefficients[,4]<0.05)
+
+# r-squared in two models
+sum_r$adj.r.squared
+sum_p$adj.r.squared
+```
+10.3. check for colinearity 
+```{r}
+# vif
+vif(lmod_return)
+vif(lmod_popularity)
+# all less than 10, no colinearity is detected
+```
+10.4 Separate data into Testing and Training datasets
+```{r}
+set.seed(123)
+# 75% of the data are training; 25% of the data are testing
+smp_size = floor(0.75 * nrow(data_new))
+train_ind = sample(seq_len(nrow(data_new)), size = smp_size)
+train = data_new[train_ind, ]
+test = data_new[-train_ind, ]
+```
+training data
+```{r}
+data_return_train = train[, -7]
+data_popularity_train = train[, -6]
+```
+testing data
+```{r}
+data_return_test = test[, -7]
+data_popularity_test = test[, -6]
+```
+10.5 Model Selection
+
+(1)LASSO
+```{r}
+data(data_return_train); require(glmnet)
+x = as.matrix(data_return_train[,-6])
+y = data_return_train$return_rate
+lmod_lasso = cv.glmnet(x, y=y, alpha = 1) 
+plot(lmod_lasso)
+# lambda that can minimize MSE
+lmod_lasso$lambda.min
+# coefficients of lasso predictors
+coef(lmod_lasso, s=lmod_lasso$lambda.min)
+```
+
+(2) Stepwise Selection
+```{r}
+library(MASS)
+lmod_return_train = lm(return_rate~., data = data_return_train)
+lmod_popularity_train = lm(popularity~., data = data_popularity_train)
+stepAIC(lmod_return_train, direction="both")$anova
+lmod_step_return_train = lm(return_rate ~ runtime + vote_count + year + Documentary + Crime + Thriller + Western + Mystery + Action + Science.Fiction + Fantasy + Animation + Horror + L15, data = data_return_train)
+summary(lmod_step_return_train) # for language, only "English" is selected in the model.
+
+
+stepAIC(lmod_popularity_train, direction="both")$anova
+lmod_step_popularity_train = lm(popularity ~ vote_average + vote_count + year + Documentary +  Crime + Thriller + Action + Comedy + Fantasy + Drama + Animation + L10 + L15 + L33, data = data_popularity_train)
+summary(lmod_step_popularity_train) # for language, "Latin","English","Nederlands" are selected.
+```
+####Return_rate Model
+10.6 Diagnositics
+(1) Linearity
+```{r}
+par(mfrow = c(2,2))
+plot(lmod_step_return_train, 1)
+summary(lmod_step_return_train)$r.squared
+```
+(2) Normality
+```{r}
+hist(lmod_step_return_train$residuals)
+qqnorm(resid(lmod_step_return_train))
+qqline(resid(lmod_step_return_train))
+shapiro.test(lmod_step_return_train$residuals)# Not normal
+```
+(3) Homoscedasticiy
+```{r}
+# graph
+par(mfrow = c(2,2))
+plot(lmod_step_return_train)
+library(lmtest)
+# breush pagan test
+bptest(lmod_step_return_train) # p-value < 0.05
+# NCV Test
+ncvTest(lmod_step_return_train) # p-value < 0.05
+```
+(4) Uncorrelated error
+```{r}
+durbinWatsonTest(lmod_step_return_train) # p = 0.382, errors are uncorrelated
+```
+(5) Outliers and influential points
+```{r}
+plot(cooks.distance(lmod_step_return_train))
+plot(lmod_step_return_train, which = c(4))
+# 2892, 2945, 2711 are highly influential points
+```
+10.7 Transfromation
+Boxcox
+Boxcox transformation for return model
+```{r}
+library(caret)
+dist_boxcox <- BoxCoxTrans(data_return_train$return_rate)
+dist_new <- predict(dist_boxcox, data_return_train$return_rate)
+fit_return_train_boxcox <- lm(dist_new ~ runtime + vote_count + year + Documentary + Crime + Thriller + Western + Mystery + Action + Science.Fiction + Fantasy + Animation + Horror + L15, data = data_return_train)
+# Linearity
+par(mfrow = c(2,2))
+plot(fit_return_train_boxcox, 1)
+summary(fit_return_train_boxcox)$r.squared
+# Normality
+hist(fit_return_train_boxcox$residuals)
+qqnorm(resid(fit_return_train_boxcox))
+qqline(resid(fit_return_train_boxcox))
+shapiro.test(fit_return_train_boxcox$residuals)
+# Equal variance
+ncvTest(fit_return_train_boxcox)
+# Uncorrelated error
+durbinWatsonTest(fit_return_train_boxcox)
+# Outliers and influential points
+plot(cooks.distance(fit_return_train_boxcox))
+plot(fit_return_train_boxcox, which = c(4))
+```
+Log
+```{r}
+lmod_step_return_train_transform = lm(log(return_rate) ~ runtime + vote_count + year + Documentary + Crime + Thriller + Western + Mystery + Action + Science.Fiction + Fantasy + Animation + Horror + L15, data = data_return_train)
+summary(lmod_step_return_train_transform)
+```
+Linearity
+```{r}
+par(mfrow = c(2,2))
+plot(lmod_step_return_train_transform, 1)
+summary(lmod_step_return_train_transform)$r.squared
+```
+Normality
+```{r}
+hist(lmod_step_return_train_transform$residuals)
+qqnorm(resid(lmod_step_return_train_transform))
+qqline(resid(lmod_step_return_train_transform))
+shapiro.test(lmod_step_return_train_transform$residuals)
+```
+Homoscedasticity
+```{r}
+# graph
+par(mfrow = c(2,2))
+plot(lmod_step_return_train_transform)
+# breush pagan test
+bptest(lmod_step_return_train_transform) # p-value=0.006677 < 0.05
+# NCV Test
+ncvTest(lmod_step_return_train_transform) # p-value= 0.3166854 > 0.05
+                                          # homoscedasticity
+```
+Uncorrelated Errors
+```{r}
+durbinWatsonTest(lmod_step_return_train_transform) # uncorrelated
+```
+Outliers and influential points
+```{r}
+plot(cooks.distance(lmod_step_return_train_transform))
+plot(lmod_step_return_train_transform, which = c(4))
+# 2801, 1547, 2554
+```
+remove outliers
+```{r}
+data_return_train_remove_out = data_return_train[-c(2801, 1547, 2554),]
+lmod_step_return_train_transform = lm(log(return_rate) ~ runtime + vote_count + year + Documentary + Crime + Thriller + Western + Mystery + Action + Science.Fiction + Fantasy + Animation + Horror + L15, data = data_return_train_remove_out)
+
+hist(lmod_step_return_train_transform$residuals)
+qqnorm(resid(lmod_step_return_train_transform))
+qqline(resid(lmod_step_return_train_transform))
+shapiro.test(lmod_step_return_train_transform$residuals)
+
+par(mfrow = c(2,2))
+plot(lmod_step_return_train_transform)
+bptest(lmod_step_return_train_transform) # p-value=0.006709 < 0.05
+ncvTest(lmod_step_return_train_transform) # p-value= 0.3192854> 0.05
+                                          # homoscedasticity
+durbinWatsonTest(lmod_step_return_train_transform) # uncorrelated
+```
+We do log_transformation: Only normality fails; there are some outliers, we will remove them.
+
+After removing the outliers for the log_transformed data, we still can't get normality. Since normality won't be a problem in most cases (except for prediction interval), we would ignore this for convenience.
+Other assumptions: homoscedasticity, independent errors hold for log_transformed data.
+
+Thus, removing outliers or not would not influence the assumption diagnostiics.
+
+Our model for predicting return rate using slm is 
+```{r}
+lmod_step_return_train_transform = lm(log(return_rate) ~ runtime + vote_count + year + Documentary + Crime + Thriller + Western + Mystery + Action + Science.Fiction + Fantasy + Animation + Horror + L15, data = data_return_train)
+```
+11. Test error
+```{r}
+library(tis)
+rows_return = lmod_step_return_train_transform$coefficients[-1]*data_return_test[, names(lmod_step_return_train_transform$coefficients)[-1]]
+fitted_test_return = lmod_step_return_train_transform$coefficients[1]+apply(rows_return, 1, sum)
+# test error
+mean(as.numeric(abs(fitted_test_return- data_return_test$return_rate)))
+```
+
+####Popularity Model
+10.6 Diagnositics
+(1) Linearity
+```{r}
+par(mfrow = c(2,2))
+plot(lmod_step_popularity_train, 1)
+summary(lmod_step_popularity_train)$r.squared # linear
+```
+(2) Normality
+```{r}
+hist(lmod_step_popularity_train$residuals)
+qqnorm(resid(lmod_step_popularity_train))
+qqline(resid(lmod_step_popularity_train))
+shapiro.test(lmod_step_popularity_train$residuals)# Not normal
+```
+(3) Homoscedasticity
+```{r}
+# graph
+par(mfrow = c(2,2))
+plot(lmod_step_popularity_train)
+# breush pagan test
+bptest(lmod_step_popularity_train) # p-value < 0.05
+# NCV Test
+ncvTest(lmod_step_popularity_train) # p-value < 0.05
+# not homoscedasticity
+```
+(4) Uncorrelated error
+```{r}
+durbinWatsonTest(lmod_step_popularity_train) # p = 0.528, errors are uncorrelated
+```
+(5) Outliers and influential points
+```{r}
+plot(cooks.distance(lmod_step_popularity_train))
+plot(lmod_step_popularity_train, which = c(4))
+# 39, 310, 182 are highly influential points
+```
+10.7 Transfromation
+Boxcox
+Boxcox transformation for popularity model
+```{r}
+dist_boxcox <- BoxCoxTrans(data_popularity_train$popularity)
+dist_new <- predict(dist_boxcox, data_popularity_train$popularity)
+fit_popularity_train_boxcox <- lm(dist_new ~ vote_average + vote_count + year + Documentary +  Crime + Thriller + Action + Comedy + Fantasy + Drama + Animation + L10 + L15 + L33, data = data_popularity_train)
+# Linearity
+par(mfrow = c(2,2))
+plot(fit_popularity_train_boxcox, 1)
+summary(fit_popularity_train_boxcox)$r.squared
+# Normality
+hist(fit_popularity_train_boxcox$residuals)
+qqnorm(resid(fit_popularity_train_boxcox))
+qqline(resid(fit_popularity_train_boxcox))
+shapiro.test(fit_popularity_train_boxcox$residuals) # not normal
+# Equal variance
+ncvTest(fit_popularity_train_boxcox) # not homoscedasticity
+# Uncorrelated error
+durbinWatsonTest(fit_popularity_train_boxcox) # uncorrelated errors
+# Outliers and influential points
+plot(cooks.distance(fit_popularity_train_boxcox))
+plot(fit_popularity_train_boxcox, which = c(4))
+```
+Log
+```{r}
+lmod_step_popularity_train_transform = lm(log(popularity) ~ vote_average + vote_count + year + Documentary +  Crime + Thriller + Action + Comedy + Fantasy + Drama + Animation + L10 + L15 + L33, data = data_popularity_train)
+summary(lmod_step_popularity_train_transform)
+```
+Linearity
+```{r}
+par(mfrow = c(2,2))
+plot(lmod_step_popularity_train_transform, 1)
+summary(lmod_step_popularity_train_transform)$r.squared # linear
+```
+Normality
+```{r}
+hist(lmod_step_popularity_train_transform$residuals)
+qqnorm(resid(lmod_step_popularity_train_transform))
+qqline(resid(lmod_step_popularity_train_transform))
+shapiro.test(lmod_step_popularity_train_transform$residuals) # not normal
+```
+Homoscedasticity
+```{r}
+# graph
+par(mfrow = c(2,2))
+plot(lmod_step_popularity_train_transform)
+# breush pagan test
+bptest(lmod_step_popularity_train_transform) # p-value < 0.05
+# NCV Test
+ncvTest(lmod_step_popularity_train_transform) # p-value < 0.05                                          # not homoscedasticity
+```
+Uncorrelated Errors
+```{r}
+durbinWatsonTest(lmod_step_popularity_train_transform) # uncorrelated
+```
+Outliers and influential points
+```{r}
+plot(cooks.distance(lmod_step_popularity_train_transform))
+plot(lmod_step_popularity_train_transform, which = c(4))
+# 2850, 2937, 2554
+```
+remove outliers for log
+```{r}
+data_popularity_train_remove_out = data_popularity_train[-c(2850, 2937, 2554),]
+lmod_step_popularity_train_transform = lm(log(popularity) ~ vote_average + vote_count + year + Documentary +  Crime + Thriller + Action + Comedy + Fantasy + Drama + Animation + L10 + L15 + L33, data = data_popularity_train_remove_out)
+summary(lmod_step_popularity_train_transform)
+
+hist(lmod_step_popularity_train_transform$residuals)
+qqnorm(resid(lmod_step_popularity_train_transform))
+qqline(resid(lmod_step_popularity_train_transform))
+shapiro.test(lmod_step_popularity_train_transform$residuals)
+
+par(mfrow = c(2,2))
+plot(lmod_step_popularity_train_transform)
+bptest(lmod_step_popularity_train_transform) 
+ncvTest(lmod_step_popularity_train_transform) 
+                                          # not homoscedasticity
+durbinWatsonTest(lmod_step_popularity_train_transform) # uncorrelated
+```
+
+For both box-cox and log transformation, normality and homoscedasticity fails before removing outliers.
+
+For log transformation, normality and homoscedasticity fails after removing ourliers.
+
+Don't know which model is the best for "popularity".
+
+11. Test error for "popularity"
+```{r}
+
+
+```
+
+
+
+
+
+
+
