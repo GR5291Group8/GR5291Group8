@@ -4,7 +4,7 @@ author: "Tao Han"
 date: "10/27/2018"
 output: html_document
 ---
-
+  
 ## prepare data and split into training and testing sets
 ```{r}
 set.seed(123)
