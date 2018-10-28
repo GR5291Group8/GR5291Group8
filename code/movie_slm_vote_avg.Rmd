@@ -1,0 +1,282 @@
+---
+title: "movie_slm_sparsity_vote_avg"
+author: 'Yan Qin (UNI: yq2232)'
+date: "2018Äê10ÔÂ25ÈÕ"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+1 Solve for the sparsity of language matrix
+```{r}
+setwd("C:/Users/Yan Qin/Documents/MA-COLUMBIA/GR5291/ADA GROUP PROJECT/tmdb-5000-movie-dataset")
+data_vote_avg = read.csv("cleaned_movie_data_vote_average.csv", header = TRUE)
+dim(data_vote_avg)
+```
+We have 2964 films and 42 variables (1 response, 41 features).
+
+For 55 languages, most of them have very low column sum which means they are rarely used as spoken language in our movie dataset. Our language matrix have sparsity. In numerical analysis and computer science, a sparse matrix or sparse array is a matrix in which most of the elements are zero. We solve the sparsity/ reduce the dimensionality by compressing minority languages into one variable called min_language. 
+We calculate the number of times each language is used as spoken language in our dataset.Then define the threshold as the 3rd quantile. In other words, langauges that are used as spoken languages in more than 28 films are considered as majority language, the rest are squeezed into the category of minority language.
+
+we consider the influence of studio. Majority studio and minority studio are considered as numerical variabels in our dataset. They are used to account for the number of big movie companies and small movie companies that are involved in movie production.
+
+We run linear model to predict the "vote_average" given certain predictors.
+
+
+2. Get ready for regression model
+```{r}
+# fit linear regression models
+lmod = lm(vote_average~., data = data_vote_avg)
+```
+3. check for colinearity 
+```{r}
+library(car)
+# vif
+vif(lmod)
+# all less than 10, no colinearity is detected
+```
+4. Separate data into Testing and Training datasets
+```{r}
+set.seed(123)
+# 75% of the data are training; 25% of the data are testing
+smp_size = floor(0.75 * nrow(data_vote_avg))
+train_ind = sample(seq_len(nrow(data_vote_avg)), size = smp_size)
+train = data_vote_avg[train_ind, ]
+test = data_vote_avg[-train_ind, ]
+```
+
+5. Model Selection
+
+(1) Lasso Selection
+This section is written on a separate rmd file by Jike Fang.
+
+(2) Stepwise Selection
+```{r}
+library(MASS)
+lmod_train = lm(vote_average~., data = train)
+stepAIC(lmod_train, direction="both")$anova
+lmod_step_train = lm(vote_average ~ runtime + vote_count + year + month + Documentary + Crime + Foreign + Adventure + Action + Comedy + Science.Fiction + Fantasy + Drama + Animation + Family + Horror + L4 + L9 + L15 + L50 + L53 + min_language + majority_studios + minority_studios, data = train)
+s = summary(lmod_step_train)
+s
+```
+
+6 Diagnositics
+(1) Linearity
+```{r}
+par(mfrow = c(2,2))
+plot(lmod_step_train, 1)
+summary(lmod_step_train)$r.squared
+```
+R_squared =  0.4808218
+
+
+(2) Normality
+```{r}
+hist(lmod_step_train$residuals)
+qqnorm(resid(lmod_step_train))
+qqline(resid(lmod_step_train))
+shapiro.test(lmod_step_train$residuals)
+```
+Shapiro test states that errors are not normally distributed, but qqplot looks ok; approximately normal. Here is the link for interprating qq plot.
+https://stats.stackexchange.com/questions/101274/how-to-interpret-a-qq-plot
+
+(3) Homoscedasticiy
+```{r}
+# graph
+par(mfrow = c(2,2))
+plot(lmod_step_train) 
+library(lmtest)
+# breush pagan test
+bptest(lmod_step_train) # p-value = 0.000627< 0.05
+# NCV Test
+ncvTest(lmod_step_train) # p-value = 0.01008262 < 0.05
+```
+For the plot, we should look at the first and third plots. error changes as fitted value changes. error variance is not constant.
+Look at a plot of the residuals versus the fitted values, we note a slight ¡°megaphone¡± or ¡°conic¡± shape of the residuals.
+We interpret this plot as having a mild pattern of nonconstant variance in which the amount of variation is related to the size of the mean, E(Y) (which is estimated by the fits).
+p-value in both breush pagan test and ncv test are less than 0.05. We reject the homoscedasticity assumption.
+
+
+
+
+(4) Uncorrelated error
+```{r}
+durbinWatsonTest(lmod_step_train) # p = 0.626
+```
+Errors are uncorrelated.
+
+(5) Outliers and influential points
+```{r}
+library(car)
+# outlier
+outlierTest(lmod_step_train)
+# look at the data 
+summary(train$vote_average);summary(train$runtime);summary(train$vote_count)
+summary(train$minority_studios);summary(train$majority_studios)
+train[row.names(train)=="706",]
+train[row.names(train)=="2234",]
+train[row.names(train)=="2581",]
+train[row.names(train)=="357",]
+# outliers are films that made by small studios and have very small values of vote_average, and vote_count
+# we can remove them 
+
+#  Cook's distance is higher than 1 are to be considered as influential
+plot(cooks.distance(lmod_step_train))
+plot(lmod_step_train, which = c(4))
+# 2244, 2132, 182 are suspected to be influential points 
+# look at the data
+train[row.names(train)=="2244",] # lowest vote_average, very low runtime, almost lowest vote_count
+train[row.names(train)=="2132",] # very low vote_average
+train[row.names(train)=="182",] # almost highest vote_count, very high vote_average
+
+# influential points are films that made by small studios or have very small/high values of vote_average, and vote_count
+# they doesn't respresent majority of films we can remove them
+
+```
+```{r}
+# remove outlier
+train_remove_out = train[!row.names(train)%in%c("706", "2234", "2581", "357", "2244", "2132", "182"),]
+```
+Since we have nonnormal errors and unconstant variance, we do transformation.
+
+7 Transfromation
+7.1 Log
+```{r}
+lmod_step_train_transform = lm(log(vote_average) ~ runtime + vote_count + year + month + Documentary + Crime + Foreign + Adventure + Action + Comedy + Science.Fiction + Fantasy + Drama + Animation + Family + Horror + L4 + L9 + L15 + L50 + L53 + min_language + majority_studios + minority_studios, data = train)
+summary(lmod_step_train_transform)
+
+# check assumptions
+# linearity
+par(mfrow = c(2,2))
+plot(lmod_step_train_transform, 1)
+summary(lmod_step_train_transform)$r.squared # r_squared = 0.436
+# normality
+hist(lmod_step_train_transform$residuals)
+qqnorm(resid(lmod_step_train_transform))
+qqline(resid(lmod_step_train_transform))
+shapiro.test(lmod_step_train_transform$residuals) # still not normal
+# homoscedasticity
+# graph
+par(mfrow = c(2,2))
+plot(lmod_step_train_transform)
+# breush pagan test
+bptest(lmod_step_train_transform) # p-value < 0.05
+# NCV Test
+ncvTest(lmod_step_train_transform) # p-value< 0.05
+# uncorrelated variance
+durbinWatsonTest(lmod_step_train_transform) # uncorrelated
+```
+Using log, we don't get any improvement in assumption checking.
+
+try boxcox solve for nonnormality
+7.2 Boxcox
+```{r}
+library(caret)
+dist_boxcox = BoxCoxTrans(train$vote_average)
+dist_new = predict(dist_boxcox, train$vote_average)
+fit_train_boxcox = lm(dist_new ~ runtime + vote_count + year + month + Documentary + Crime + Foreign + Adventure + Action + Comedy + Science.Fiction + Fantasy + Drama + Animation + Family + Horror + L4 + L9 + L15 + L50 + L53 + min_language + majority_studios + minority_studios, data = train)
+# Linearity
+par(mfrow = c(2,2))
+plot(fit_train_boxcox, 1)
+summary(fit_train_boxcox)$r.squared
+# r_sqaured = 0.5103225
+
+# Normality
+hist(fit_train_boxcox$residuals)
+qqnorm(resid(fit_train_boxcox))
+qqline(resid(fit_train_boxcox)) # qqplot looks better than log transformed model and original model
+shapiro.test(fit_train_boxcox$residuals) # p-value gets larger
+
+# Equal variance
+bptest(fit_train_boxcox)
+ncvTest(fit_train_boxcox) # still heteroscedasticity
+
+# Uncorrelated error
+durbinWatsonTest(fit_train_boxcox) # uncorrelated error
+```
+No obvious improvement from untransformed model.
+Since homoscedasticity fails everytime, we try weighted least squares model(technically speaking, this is not a transformation).
+
+8. Weighted least squares (weighted linear regression)
+treating each observation as more or less informative about the underlying relationship between X and Y. Those points that are more informative are given more 'weight', and those that are less informative are given less weight.
+
+We use the following procedure to determine appropriate weights:
+Store the residuals and the fitted values from the ordinary least squares (OLS) regression.
+Calculate the absolute values of the OLS residuals.
+Regress the absolute values of the OLS residuals versus the OLS fitted values and store the fitted values from this regression. These fitted values are estimates of the error standard deviations.
+Calculate weights equal to 1/fits^2, where "fits" are the fitted values from the regression in the last step.
+We then refit the original regression model but using these weights in a weighted least squares (WLS) regression.
+
+Here is the reference link:
+https://www.itl.nist.gov/div898/handbook/pmd/section1/pmd143.htm
+Since weighted least squares method are easily to get influenced by outliers, we remove outliers that are detected in untransfromed model.
+```{r}
+lmod_remove_out =  lm(vote_average~  runtime + vote_count + year + month + Documentary + Crime + Foreign + Adventure + Action + Comedy + Science.Fiction + Fantasy + Drama + Animation + Family + Horror + L4 + L9 + L15 + L50 + L53 + min_language + majority_studios + minority_studios, data = train_remove_out)
+
+# Fit a WLS model using weights = 1/(fitted values)2.
+wts = 1/fitted(lm(abs(residuals(lmod_remove_out)) ~  fitted(lmod_remove_out), data = train_remove_out))^2
+# Weighted Least Squares model
+wlsmod = lm(vote_average ~ runtime + vote_count + year + month + Documentary + Crime + Foreign + Adventure + Action + Comedy + Science.Fiction + Fantasy + Drama + Animation + Family + Horror + L4 + L9 + L15 + L50 + L53 + min_language + majority_studios + minority_studios, weights = wts, data = train_remove_out)
+
+# check assumptions
+# Linearity
+par(mfrow = c(2,2))
+plot(wlsmod, 1)
+summary(wlsmod)$r.squared
+# r_sqaured = 0.5
+
+# Normality
+hist(wlsmod$residuals)
+qqnorm(resid(wlsmod))
+qqline(resid(wlsmod)) # qqplot looks better than log transformed model and original model
+
+# Equal variance
+bptest(wlsmod) # p-value < 0.05
+ncvTest(wlsmod) # p-value> 0.05!!!!! homoscedasticity
+
+# Uncorrelated error
+durbinWatsonTest(wlsmod) # p-value = 0.872; uncorrelated error
+```
+9. Test Error
+```{r}
+error = c()
+# untransformed linear model
+lmod_step_train_pred = predict(lmod_step_train,newdata=test[,-1])
+error[1] = mean(abs((test[,1]-lmod_step_train_pred)/test[,1]))
+# log transformed model
+lmod_step_train_transform_pred = predict(lmod_step_train_transform,newdata=test[,-1])
+error[2] = mean(abs((test[,1]-lmod_step_train_transform_pred)/test[,1]))
+# box-cox transformed model
+fit_train_boxcox_pred = predict(fit_train_boxcox,newdata=test[,-1])
+error[3] = mean(abs((test[,1]-fit_train_boxcox_pred)/test[,1]))
+# WLS
+wlsmod_pred = predict(wlsmod,newdata=test[,-1])
+error[4] = mean(abs((test[,1]-wlsmod_pred)/test[,1]))
+model_name = c("Ordinary Least Sqaures", "Log Tansformation", "Box-Cox Transformation", "Weighted Least Squares")
+MAPE = rbind(model_name, error)
+MAPE
+```
+10. train error
+```{r}
+error = c()
+# untransformed linear model
+lmod_step_train_pred = predict(lmod_step_train,newdata=train_remove_out[,-1])
+error[1] = mean(abs((train_remove_out[,1]-lmod_step_train_pred)/train_remove_out[,1]))
+# log transformed model
+lmod_step_train_transform_pred = predict(lmod_step_train_transform,newdata=train_remove_out[,-1])
+error[2] = mean(abs((train_remove_out[,1]-lmod_step_train_transform_pred)/train_remove_out[,1]))
+# box-cox transformed model
+fit_train_boxcox_pred = predict(fit_train_boxcox,newdata=train_remove_out[,-1])
+error[3] = mean(abs((train_remove_out[,1]-fit_train_boxcox_pred)/train_remove_out[,1]))
+# WLS
+wlsmod_pred = predict(wlsmod,newdata=train_remove_out[,-1])
+error[4] = mean(abs((train_remove_out[,1]-wlsmod_pred)/train_remove_out[,1]))
+model_name = c("Ordinary Least Sqaures", "Log Tansformation", "Box-Cox Transformation", "Weighted Least Squares")
+MAPE = rbind(model_name, error)
+MAPE
+```
+
+we compare the test error(MAPE) from these four models. Box-Cox performs the worst. Weighted least squares have slightly higher MAPE than the ols. But it produces a model that satisfies other model assumptions. We should select WLS.
+
