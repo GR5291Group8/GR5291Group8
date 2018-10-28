@@ -1,0 +1,35 @@
+---
+title: "Tree"
+author: "Tao Han"
+date: "10/27/2018"
+output: html_document
+---
+
+## prepare data and split into training and testing sets
+```{r}
+set.seed(123)
+# 75% of the data are in training set; 25% of the data are in testing set
+data_vote_avg <- read.csv("../Data/cleaned_movie_data_vote_average.csv",header = TRUE)
+smp_size = floor(0.75 * nrow(data_vote_avg))
+train_ind = sample(seq_len(nrow(data_vote_avg)), size = smp_size)
+train = data_vote_avg[train_ind, ]
+test = data_vote_avg[-train_ind, ]
+```
+
+## implement tree model
+```{r}
+library(rpart)
+tree.model <- rpart(vote_average~., method = 'anova', data = train, 
+                    control = rpart.control(maxdepth = 8, minsplit = 20, cp = 0.01))
+plot(tree.model, margin = 0.05)
+text(tree.model, use.n = TRUE, cex = 0.5)
+tree.pred <- predict(tree.model, test)
+```
+
+## performance
+```{r}
+error <- mean(abs((test$vote_average-tree.pred)/test$vote_average))
+error
+```
+
+
