@@ -1,0 +1,155 @@
+---
+title: "movie_neuralnet"
+author: "Xianghong Luo xl2723"
+date: "10/20/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(keras)
+
+data_1 = read.csv("cleaned_movie_data_vote_average.csv", header = TRUE)
+# data_1 = cbind(data_1[, c("runtime", "vote_average", "vote_count", "year", "month",  "return_rate", "popularity")], data_1[, 19:92])
+
+# # some languages are minority language
+# # this may influence the  model fitting
+# language_matrix  = data_1[, 27:81] # sparsity
+# language_num = colSums(language_matrix)
+# x = names(language_num)
+# y = as.numeric(language_num)
+# barplot(y, names.arg =x, main = "histogram of number of languages", xlab = "languages", ylab = "frequncy of languages in movies", ylim = c(0, 3000) ) 
+# sort(language_num, decreasing = TRUE)
+# summary(language_num)
+# # w set our threshold of being majority language as whose language_num greater than or equal to 3rd quantile of language_num.
+# lan_threshold = as.numeric(summary(language_num)[5])
+# lan_threshold # which is 28
+# # these are the majority languages
+# name = names(which(language_num>=lan_threshold))
+# # language_reference_table[as.numeric(which(language_num>=lan_threshold)), 2]
+# major_language = language_matrix[, name]
+# # their numbers are
+# as.numeric(language_num[as.numeric(which(language_num>=lan_threshold))])
+# # minority language matrix
+# min_language = language_matrix[, which(!names(language_matrix)%in%name)]
+# min_language = rowSums(min_language)
+# major_language$min_language = as.numeric(min_language>0)
+# data_new = cbind(data_1[,1:26],major_language)
+# names(data_new)
+
+```
+
+```{r}
+
+# seperate datasets for return driven model and popularity driven model
+
+#也是本来的code，这里用了你在另外一个rmd里面的code来分了train跟test data
+data_vote = data_1
+dim(data_vote)
+
+smp_size = floor(0.75 * nrow(data_1))
+train_ind = sample(seq_len(nrow(data_1)), size = smp_size)
+train = data_vote[train_ind,-1]
+test = data_vote[-train_ind,-1]
+train_response <- data_vote[train_ind,1]
+test_response <- data_vote[-train_ind,1]
+
+```
+
+scale
+```{r}
+mean <- apply(train[,c(1:4,40:41)], 2, mean)
+std <- apply(train[,c(1:4,40:41)], 2, sd)
+train_data_num <- scale(train[,c(1:4,40:41)], center = mean, scale = std)
+test_data_num <- scale(test[,c(1:4,40:41)], center = mean, scale = std)
+
+train_data <- data.frame(train_data_num,train[,-c(1:4,40:41)]) 
+test_data <- data.frame(test_data_num,test[,-c(1:4,40:41)])
+  
+```
+
+model
+```{r}
+# Because we will need to instantiate the same model multiple times,
+# we use a function to construct it.
+build_model <- function() {
+  model <- keras_model_sequential() %>% 
+    layer_dense(units = 16,
+                activation = "relu", 
+                input_shape = dim(train_data)[[2]]) %>% 
+    # layer_dropout(rate=0.5) %>% 
+    layer_dense(units = 16, 
+                activation = "relu") %>% 
+    # layer_dropout(rate=0.5) %>% 
+    layer_dense(units = 1) 
+    
+  model %>% compile(
+    optimizer = "rmsprop", 
+    loss = "mse", 
+    metrics = c("mae")
+  )
+}
+```
+
+cross validation
+```{r, echo=TRUE, results='hide'}
+num_epochs <- 100
+all_mae_histories <- NULL
+  
+k <- 4
+folds <- sample(cut(1:nrow(train_data), breaks = k, labels = FALSE))
+
+scores <- rep(0,k)
+i <- 1
+  print(paste("fitting fold ",i))
+  # Prepare the validation data: data from partition # k
+  val_indices <- which(folds == i, arr.ind = TRUE)
+  val_data <- as.matrix(train_data[val_indices,])
+  val_response <- as.matrix(train_response[val_indices])
+  
+  # Prepare the training data: data from all other partitions
+  partial_train_data <- as.matrix(train_data[-val_indices,])
+  partial_train_response <- as.matrix(train_response[-val_indices])
+  
+  # Build the Keras model (already compiled)
+  model <- build_model()
+  
+  history <- model %>% fit(
+    partial_train_data, partial_train_response,
+    validation_data = list(val_data, val_response),
+    epochs = num_epochs, batch_size = 16, verbose = 1
+  )
+  mae_history <- history$metrics$val_mean_absolute_error
+  all_mae_histories <- rbind(all_mae_histories, mae_history)
+  
+  predictions <- model %>% predict(as.matrix(test_data))
+  scores[i] <- mean(abs(predictions-test_response))
+mean(scores)
+
+```
+
+fit to whole dataset
+```{r}
+
+model %>% fit(as.matrix(train_data),as.matrix(train_response),
+              epochs = num_epochs, batch_size = 16, verbose = 1
+  )
+predictions <- model %>% predict(as.matrix(test_data))
+scores <- mean(abs((predictions-test_response)/test_response))
+print(scores)
+
+```
+
+```{r}
+
+lm_data <- data.frame(response=train_response,train_data)
+
+lm_fit <- lm(response~.,data=lm_data)
+predictions <- predict(lm_fit,test_data)
+final_mae <- mean(abs(predictions-test_response))
+
+```
