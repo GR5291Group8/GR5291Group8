@@ -1,7 +1,6 @@
 ---
-title: "ridge"
+title: "Untitled"
 author: "xf2170"
-date: "2018.10.28"
 output: html_document
 ---
 
@@ -12,7 +11,7 @@ knitr::opts_chunk$set(echo = TRUE)
 ```{r}
 data = read.csv("cleaned_movie_data_vote_average.csv", header = TRUE)
 ```
-Separate data into Testing and Training datasets
+
 ```{r}
 set.seed(123)
 # 75% of the data are training; 25% of the data are testing
@@ -22,57 +21,55 @@ train_data = data[train_index, ]
 test_data = data[-train_index, ]
 head(test_data)
 ```
-Ridge
+
 ```{r}
 library(glmnet)
 x = data.matrix(train_data[,-1])
 y = train_data$vote_average
 lambda_ridge = cv.glmnet(x, y = y, alpha = 0) 
-plot(ridgemodel)
 ridge_model <- glmnet(x, y, alpha = 0, lambda = lambda_ridge$lambda.min)
 coef(ridge_model)
 ```
-Diagnositics
+Ridge model choose all 41 variables.
 
+Diagnositics
+The checks of several assumptions are still based on OLS linear regression model with all 41 variables.
 (1) Linearity
 ```{r}
-lmridge <- lm(vote_average ~ runtime + vote_count + year + month + History + Documentary + Crime + Thriller + Foreign + War + Adventure + Western + Music + Mystery + Action + Comedy + Science.Fiction + Romance + Fantasy + Drama + Animation + Family + Horror + L4 + L6 + L9 + L10 + L12 + L13 + L14 + L15 + L27 + L32 + L33 + L50 + L52 + L53 + L54 + min_language + majority_studios + minority_studios, data = train_data)
-par(mfrow = c(2,2))
-plot(lmridge, 1)
-summary(lmridge)$r.squared
+OLSmodel <- lm(vote_average ~ runtime + vote_count + year + month + History + Documentary + Crime + Thriller + Foreign + War + Adventure + Western + Music + Mystery + Action + Comedy + Science.Fiction + Romance + Fantasy + Drama + Animation + Family + Horror + L4 + L6 + L9 + L10 + L12 + L13 + L14 + L15 + L27 + L32 + L33 + L50 + L52 + L53 + L54 + min_language + majority_studios + minority_studios, data = train_data)
+summary(OLSmodel)
+plot(OLSmodel, 1)
+summary(OLSmodel)$r.squared
 ```
 R-squared is 0.483417
-
 (2) Normality
 ```{r}
-hist(lmridge$residuals)
-qqnorm(resid(lmridge))
-qqline(resid(lmridge))
-shapiro.test(resid(lmridge))
+hist(OLSmodel$residuals)
+qqnorm(resid(OLSmodel))
+qqline(resid(OLSmodel))
+shapiro.test(resid(OLSmodel))
 ```
 The normality assumption is not satisfied.
-
 (3) Homoscedasticiy
 ```{r}
 # graph
 par(mfrow = c(2,2))
-plot(lmridge)
+plot(OLSmodel)
 library(lmtest)
-bptest(lmridge) 
-ncvTest(lmridge)
+library(car)
+bptest(OLSmodel) 
+ncvTest(OLSmodel)
 ```
 The assumption of homoscedasticiy is not satisfied.
-
 (4) Uncorrelated error
 ```{r}
-durbinWatsonTest(lmridge)
+durbinWatsonTest(OLSmodel)
 ```
 Errors are uncorrelated
-
 (5) Outliers and influential points
 ```{r}
 library(car)
-outlierTest(lmridge)
+outlierTest(OLSmodel)
 summary(train_data$vote_average)
 summary(train_data$runtime)
 summary(train_data$vote_count)
@@ -83,93 +80,58 @@ train_data[row.names(train_data)=="2234",]
 train_data[row.names(train_data)=="2581",]
 train_data[row.names(train_data)=="357",]
 # Outliers are films that made by small studios and have very small values of vote_average, and vote_count
-# Therefore we can remove them 
-
-plot(cooks.distance(lmridge))
-plot(lmridge, which = c(4))
-train[row.names(train)=="2244",] 
+plot(cooks.distance(OLSmodel))
+plot(OLSmodel, which = c(4))
+train_data[row.names(train_data)=="2244",] 
 # lowest vote_average, very low runtime, almost lowest vote_count
-train[row.names(train)=="2132",] 
+train_data[row.names(train_data)=="2132",] 
 # very low vote_average
-train[row.names(train)=="182",] 
+train_data[row.names(train_data)=="182",] 
 # almost highest vote_count, very high vote_average
 # Influential points are films that made by small studios or have very small/high values of vote_average, and vote_count
-# They doesn't respresent majority of films we can remove them
 ```
-
+Then remove outliers and influential points
 ```{r}
-# remove outlier
 train_data_ro = train_data[!row.names(train_data)%in%c("706", "2234", "2581", "357", "2244", "2132", "182"),]
 ```
-
-Boxcox
+Use train dataset without outliers and influential points do OLS and ridge again
 ```{r}
-library(caret)
-dist_boxcox = BoxCoxTrans(train_data$vote_average)
-dist_new = predict(dist_boxcox, train_data$vote_average)
-fit_train_boxcox = lm(dist_new ~ runtime + vote_count + year + month + History + Documentary + Crime + Thriller + Foreign + War + Adventure + Western + Music + Mystery + Action + Comedy + Science.Fiction + Romance + Fantasy + Drama + Animation + Family + Horror + L4 + L6 + L9 + L10 + L12 + L13 + L14 + L15 + L27 + L32 + L33 + L50 + L52 + L53 + L54 + min_language + majority_studios + minority_studios, data = train_data)
-# Linearity
-par(mfrow = c(2,2))
-plot(fit_train_boxcox, 1)
-summary(fit_train_boxcox)$r.squared
-# R_sqaured = 0.51
-
-# Normality
-hist(fit_train_boxcox$residuals)
-qqnorm(resid(fit_train_boxcox))
-qqline(resid(fit_train_boxcox))
-shapiro.test(fit_train_boxcox$residuals)
-
-# Homoscedasticity
-bptest(fit_train_boxcox)
-ncvTest(fit_train_boxcox)
-
-# Uncorrelated error
-durbinWatsonTest(fit_train_boxcox)
+OLSmodel_ro <- lm(vote_average ~ runtime + vote_count + year + month + History + Documentary + Crime + Thriller + Foreign + War + Adventure + Western + Music + Mystery + Action + Comedy + Science.Fiction + Romance + Fantasy + Drama + Animation + Family + Horror + L4 + L6 + L9 + L10 + L12 + L13 + L14 + L15 + L27 + L32 + L33 + L50 + L52 + L53 + L54 + min_language + majority_studios + minority_studios, data = train_data_ro)
+library(glmnet)
+x = data.matrix(train_data_ro[,-1])
+y = train_data_ro$vote_average
+lambda_ridge = cv.glmnet(x, y = y, alpha = 0) 
+ridge_model_ro <- glmnet(x, y, alpha = 0, lambda = lambda_ridge$lambda.min)
+selected_lambda <- lambda_ridge$lambda.min
+selected_lambda
 ```
-The assumptions of normality and homoscedasaticity are not satisfied; the error are uncorrelated.
-
-Since homoscedasticity fails everytime, we try weighted least squares model
-
-Weighted Least Squares Model
+Use train data without outliers and influential points, ridge selected lambda = 0.03767885.
+Test Error of OLS
 ```{r}
-ridge_model_ro =  lm(vote_average ~  runtime + vote_count + year + month + History + Documentary + Crime + Thriller + Foreign + War + Adventure + Western + Music + Mystery + Action + Comedy + Science.Fiction + Romance + Fantasy + Drama + Animation + Family + Horror + L4 + L6 + L9 + L10 + L12 + L13 + L14 + L15 + L27 + L32 + L33 + L50 + L52 + L53 + L54 + min_language + majority_studios + minority_studios, data = train_data_ro)
+coef_OLS <- as.matrix(OLSmodel_ro$coefficients)[2:42]
 
-# Fit a WLS model using weights = 1/(fitted values)2.
-wts = 1 / fitted(lm(abs(residuals(ridge_model_ro)) ~  fitted(ridge_model_ro), data = train_data_ro)) ^ 2
+predict_result_OLS <- as.matrix(test_data[,2:42]) %*% coef_OLS + OLSmodel_ro$coefficients[1]
 
-# Weighted Least Squares model
-ridge_model_ro_wls = lm(vote_average ~  runtime + vote_count + year + month + History + Documentary + Crime + Thriller + Foreign + War + Adventure + Western + Music + Mystery + Action + Comedy + Science.Fiction + Romance + Fantasy + Drama + Animation + Family + Horror + L4 + L6 + L9 + L10 + L12 + L13 + L14 + L15 + L27 + L32 + L33 + L50 + L52 + L53 + L54 + min_language + majority_studios + minority_studios, weights = wts, data = train_data_ro)
+R_squared_OLS <- sum((predict_result_OLS - test_data[,1]) * (predict_result_OLS - test_data[,1])) / 741 / var(test_data[,1])
+R_squared_OLS
 
-# check assumptions
-# Linearity
-par(mfrow = c(2,2))
-plot(ridge_model_ro_wls, 1)
-summary(ridge_model_ro_wls)$r.squared
-# r_sqaured = 0.5029
-
-# Normality
-hist(ridge_model_ro_wls$residuals)
-qqnorm(resid(ridge_model_ro_wls))
-qqline(resid(ridge_model_ro_wls))
-shapiro.test(resid(ridge_model_ro_wls))
-
-# Homoscedasticity
-bptest(ridge_model_ro_wls)
-ncvTest(ridge_model_ro_wls)
-
-# Uncorrelated error
-durbinWatsonTest(ridge_model_ro_wls)
+argmin_ridge_OLS <- sum((predict_result_OLS - test_data[,1]) * (predict_result_OLS - test_data[,1])) + selected_lambda * sum(coef_OLS * coef_OLS)
+argmin_ridge_OLS
 ```
-The normality assumption is still not satisfied; the homoscedasticity assumption is satisfied; the errors are uncorrelated.
-
-Test Error
+Test Error of ridge
 ```{r}
-test_data <- data.matrix(test_data[,-1])
-ridge_pred <- predict(ridge_model_ro, newx = test_data)
-error_ridge <- mean(abs((test_data[,1] - ridge_pred) / test_data[,1]), na.rm = TRUE)
-ridge_pred_wls <- predict(ridge_model_ro_wls, newx = test_data)
-error_wls <- mean(abs((test_data[,1] - ridge_pred_wls) / test_data[,1]), na.rm = TRUE)
-error_ridge
-error_wls
+coef_ridge <- as.matrix(coef(ridge_model_ro)[2:42])
+
+predict_result_ridge <- as.matrix(test_data[,2:42]) %*% coef_ridge + coef(ridge_model_ro)[1]
+
+R_squared_ridge <- sum((predict_result_ridge - test_data[,1]) * (predict_result_ridge - test_data[,1])) / 741 / var(test_data[,1])
+R_squared_ridge
+
+argmin_ridge <- sum((predict_result_ridge - test_data[,1]) * (predict_result_ridge - test_data[,1])) + selected_lambda * sum(coef_ridge * coef_ridge)
+argmin_ridge
+```
+Comparing test error of OLS and ridge, OLS has a better R-squared; however, ridge has a better result when considering the values of coefficients.
+MAPE of ridge
+```{r}
+sum(abs((predict_result_ridge - test_data[,1]) / test_data[,1]))/741
 ```
