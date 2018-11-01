@@ -135,3 +135,30 @@ MAPE of ridge
 ```{r}
 sum(abs((predict_result_ridge - test_data[,1]) / test_data[,1]))/741
 ```
+Since ridge model cannot select variables, use ridge model based on the 36 predictors selected by LASSO.
+```{r}
+x = data.matrix(train_data_ro[,c("runtime","vote_count","year","month","Documentary","Crime",
+                                 "Foreign","War","Adventure","Western","Music","Mystery","Action","Comedy",
+                                 "Science.Fiction","Romance","Fantasy","Drama","Animation","Family","Horror",
+                                 "L4","L6","L9","L10","L12","L13","L15","L33","L50","L52","L53",
+                                 "L54","min_language","majority_studios","minority_studios")])
+y = train_data_ro$vote_average
+lambda_ridge = cv.glmnet(x, y = y, alpha = 0) 
+ridge_model_ro_36 <- glmnet(x, y, alpha = 0, lambda = lambda_ridge$lambda.min)
+selected_lambda <- lambda_ridge$lambda.min
+selected_lambda
+```
+
+```{r}
+coef_ridge_36 <- as.matrix(coef(ridge_model_ro_36)[2:37])
+
+predict_result_ridge_36 <- as.matrix(test_data[,c("runtime","vote_count","year","month","Documentary","Crime",
+                                 "Foreign","War","Adventure","Western","Music","Mystery","Action","Comedy",
+                                 "Science.Fiction","Romance","Fantasy","Drama","Animation","Family","Horror",
+                                 "L4","L6","L9","L10","L12","L13","L15","L33","L50","L52","L53",
+                                 "L54","min_language","majority_studios","minority_studios")]) %*% coef_ridge_36 + coef(ridge_model_ro_36)[1]
+```
+MAPE of ridge
+```{r}
+sum(abs((predict_result_ridge_36 - test_data[,1]) / test_data[,1]))/741
+```
