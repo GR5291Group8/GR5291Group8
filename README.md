@@ -2,7 +2,7 @@
 
 + Group 8
 + Project title: Movie Popularity Prediction
-+ Main file: [the Report version](output/5291FinalReport.pdf) or [the PPT version](output/GR5291Group8_PPT.pdf).
++ Main file: [the Report version](output/GR5291Group8FinalReport.pdf) or [the PPT version](output/GR5291Group8PPT.pdf).
 + Kaggle Dataset URL: [Kaggle URL](https://www.kaggle.com/tmdb/tmdb-movie-metadata)
 + Team members
 	+ Mengqi CHEN(mc4396), Sitong CHEN(sc4283), Xiyao CHEN(xc2417)
