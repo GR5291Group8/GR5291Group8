@@ -1,0 +1,141 @@
+---
+title: "lasso regression without assumption validation"
+author: 'Yan Qin (UNI: yq2232)'
+date: "2018Äê11ÔÂ1ÈÕ"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(car)
+library(lmtest)
+```
+
+```{r}
+data_vote_avg = read.csv("cleaned_movie_data_vote_average.csv", header = TRUE)
+set.seed(123)
+# 75% of the data are training; 25% of the data are testing
+smp_size = floor(0.75 * nrow(data_vote_avg))
+train_ind = sample(seq_len(nrow(data_vote_avg)), size = smp_size)
+train = data_vote_avg[train_ind, ]
+test = data_vote_avg[-train_ind, ]
+data(train); require(glmnet)
+x = data.matrix(train[,-1])
+y = train$vote_average
+lmod_lasso = cv.glmnet(x, y=y, alpha = 1) 
+plot(lmod_lasso)
+# lambda that can minimize MSE
+lmod_lasso$lambda.min
+```
+
+lasso model 
+```{r}
+# coefficients of lasso predictors
+#coef(lmod_lasso, s=lmod_lasso$lambda.min)
+lasso_model <- glmnet(x,y,alpha = 1,lambda = lmod_lasso$lambda.min)
+coef(lasso_model)
+```
+
+
+linear model using lasso feature selection
+36 predictors
+```{r}
+lassolm <- lm(vote_average ~ runtime + vote_count + year + month + Documentary + Crime + War + Foreign + Adventure + Western + Music + Mystery + Action + Comedy + Science.Fiction + Romance + Fantasy + Drama + Animation + Family + Horror + L4 + L6 + L9 + L10 + L12 + L13 + L15 + L33 + L50 + L52 + L53 + L54 + min_language + majority_studios + minority_studios, data = train)
+```
+
+check assumpotion
+1.linearity
+```{r}
+par(mfrow = c(2,2))
+plot(lassolm, 1)
+summary(lassolm)$r.squared
+```
+2.normality
+```{r}
+hist(lassolm$residuals)
+qqnorm(resid(lassolm))
+qqline(resid(lassolm))
+shapiro.test(resid(lassolm)) # p<0.05 fail
+```
+
+3.constant variances
+```{r}
+# graph
+par(mfrow = c(2,2))
+plot(lassolm)
+library(lmtest)
+# breush pagan test
+bptest(lassolm) # p-value < 0.05 fail
+# NCV Test
+ncvTest(lassolm) # p-value = 0.024 < 0.05 fail
+```
+
+4.uncorelated errors
+```{r}
+durbinWatsonTest(lassolm) # p = 0.604 > 0.05, hold
+```
+5.outliers
+```{r}
+outlierTest(lassolm)
+plot(cooks.distance(lassolm))
+plot(lassolm, which = c(4))
+```
+
+lienar model after wls
+```{r}
+# remove outlier
+train_remove_out = train[!row.names(train)%in%c("706", "2234", "2581", "357", "2244", "2132", "182"),]
+lmod_remove_out =  lm(vote_average~  runtime + vote_count + year + month + Documentary + Crime + War + Foreign + Adventure + Western + Music + Mystery + Action + Comedy + Science.Fiction + Romance + Fantasy + Drama + Animation + Family + Horror + L4 + L6 + L9 + L10 + L12 + L13 + L15 + L33 + L50 + L52 + L53 + L54 + min_language + majority_studios + minority_studios, data = train_remove_out)
+# Fit a WLS model using weights = 1/(fitted values)2.
+wts = 1/fitted(lm(abs(residuals(lmod_remove_out)) ~  fitted(lmod_remove_out), data = train_remove_out))^2
+# Weighted Least Squares model
+lasso_wlsmod = lm(vote_average ~ runtime + vote_count + year + month + Documentary + Crime + War + Foreign + Adventure + Western + Music + Mystery + Action + Comedy + Science.Fiction + Romance + Fantasy + Drama + Animation + Family + Horror + L4 + L6 + L9 + L10 + L12 + L13 + L15 + L33 + L50 + L52 + L53 + L54 + min_language + majority_studios + minority_studios, weights = wts, data = train_remove_out)
+```
+
+check assumpotion after WLS
+1.linearity
+```{r}
+par(mfrow = c(2,2))
+plot(wlsmod, 1)
+summary(wlsmod)$r.squared
+```
+2.normality
+```{r}
+hist(lasso_wlsmod$residuals)
+qqnorm(resid(lasso_wlsmod))
+qqline(resid(lasso_wlsmod))
+shapiro.test(resid(lasso_wlsmod)) 
+```
+
+3.constant variances
+```{r}
+# graph
+par(mfrow = c(2,2))
+plot(lasso_wlsmod)
+# NCV Test
+ncvTest(lasso_wlsmod) # p-value = 0.6506117 > 0.05 hold
+```
+
+4.uncorelated errors
+```{r}
+durbinWatsonTest(lasso_wlsmod) # p = 0.672 > 0.05, hold
+```
+
+Test Error
+lasso model test error
+```{r}
+testdata <- data.matrix(test[,-1])
+lm_pred_glmnet <- predict(lasso_model,newx = testdata) # directly using glmnet,indeed like Ols traing with var selected
+error_glmnet <- mean(abs((test[,1]-lm_pred_glmnet)/test[,1]), na.rm = TRUE)
+error_glmnet
+```
+linear wls test error
+```{r}
+lm_pred_wls <- predict(lasso_wlsmod,newx = testdata)# by WLS
+error_wls <- mean(abs((test[,1]-lm_pred_wls)/test[,1]))
+error_wls
+```
+
